@@ -1,0 +1,14 @@
+.env
+.env.local
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Docker/runtime data
+mysql-data/
+monitored-tmp/
+
+# Editor files
+.vscode/
+.idea/
