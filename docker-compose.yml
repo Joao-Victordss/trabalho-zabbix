@@ -22,15 +22,55 @@ services:
       timeout: 5s
       retries: 20
 
+  zabbix-db-init:
+    image: zabbix/zabbix-server-mysql:alpine-7.0-latest
+    container_name: zabbix-db-init
+    restart: "no"
+    depends_on:
+      mysql-server:
+        condition: service_healthy
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zabbix}
+      MYSQL_USER: ${MYSQL_USER:-zabbix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zabbix}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-zabbix-root}
+    command:
+      - sh
+      - -lc
+      - |
+        set -eu
+        DB="$${MYSQL_DATABASE:-zabbix}"
+        USER="$${MYSQL_USER:-zabbix}"
+        PASS="$${MYSQL_PASSWORD:-zabbix}"
+        ROOT_PASS="$${MYSQL_ROOT_PASSWORD:-zabbix-root}"
+
+        MYSQL_CMD="mysql --ssl=0 -h mysql-server"
+        USER_COUNT="$$($$MYSQL_CMD -uroot -p"$$ROOT_PASS" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$$DB' AND table_name='users';" 2>/dev/null || echo 0)"
+        if [ "$$USER_COUNT" -gt 0 ]; then
+          ROW_COUNT="$$($$MYSQL_CMD -u"$$USER" -p"$$PASS" "$$DB" -Nse "SELECT COUNT(*) FROM users;" 2>/dev/null || echo 0)"
+          if [ "$$ROW_COUNT" -gt 0 ]; then
+            echo "Banco Zabbix ja inicializado. Pulando importacao."
+            exit 0
+          fi
+        fi
+
+        echo "Banco Zabbix ausente ou incompleto. Recriando schema academico limpo."
+        $$MYSQL_CMD -uroot -p"$$ROOT_PASS" -e "DROP DATABASE IF EXISTS \`$$DB\`; CREATE DATABASE \`$$DB\` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; GRANT ALL PRIVILEGES ON \`$$DB\`.* TO '$$USER'@'%'; SET GLOBAL log_bin_trust_function_creators = 1;"
+        zcat /usr/share/doc/zabbix-server-mysql/create.sql.gz | $$MYSQL_CMD -u"$$USER" -p"$$PASS" "$$DB"
+        echo "Banco Zabbix importado com dados iniciais."
+    networks:
+      - zabbix-net
+
   zabbix-server:
     image: zabbix/zabbix-server-mysql:alpine-7.0-latest
     container_name: zabbix-server
     restart: unless-stopped
     depends_on:
-      mysql-server:
-        condition: service_healthy
+      zabbix-db-init:
+        condition: service_completed_successfully
     environment:
       DB_SERVER_HOST: mysql-server
+      DB_SERVER_DBNAME: ${MYSQL_DATABASE:-zabbix}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-zabbix}
       MYSQL_USER: ${MYSQL_USER:-zabbix}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zabbix}
@@ -48,12 +88,13 @@ services:
     container_name: zabbix-web
     restart: unless-stopped
     depends_on:
-      mysql-server:
-        condition: service_healthy
+      zabbix-db-init:
+        condition: service_completed_successfully
       zabbix-server:
         condition: service_started
     environment:
       DB_SERVER_HOST: mysql-server
+      DB_SERVER_DBNAME: ${MYSQL_DATABASE:-zabbix}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-zabbix}
       MYSQL_USER: ${MYSQL_USER:-zabbix}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zabbix}

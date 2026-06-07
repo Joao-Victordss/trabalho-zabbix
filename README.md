@@ -11,6 +11,7 @@ Servicos criados pelo `docker-compose.yml`:
 | Servico | Funcao |
 | --- | --- |
 | `mysql-server` | Banco de dados usado pelo Zabbix Server e Zabbix Web |
+| `zabbix-db-init` | Inicializador que importa o SQL oficial do Zabbix quando o banco ainda nao esta pronto |
 | `zabbix-server` | Servidor gerente que coleta dados, avalia triggers e executa acoes |
 | `zabbix-web` | Interface web do Zabbix, acessivel em `http://localhost:8080` |
 | `host-monitorado` | Container Linux separado, com `zabbix-agent2`, Squid, Supervisor e scripts de teste |
@@ -80,6 +81,22 @@ docker compose logs -f zabbix-server
 
 O primeiro boot pode demorar alguns minutos, pois o Zabbix cria e atualiza o schema do banco MySQL.
 
+Este Compose inclui o servico `zabbix-db-init`, que importa o `create.sql.gz` oficial da imagem `zabbix-server-mysql`. Ele evita o erro de banco incompleto em que a interface mostra:
+
+```text
+Database error
+Unable to select configuration.
+```
+
+Se esse erro aparecer depois de uma tentativa anterior interrompida, recrie os volumes do laboratorio:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+Use esse comando apenas no laboratorio, pois `down -v` apaga o banco MySQL do projeto.
+
 ## Acesso ao Zabbix Web
 
 Acesse:
@@ -126,6 +143,20 @@ export ZABBIX_URL=http://localhost:8080/api_jsonrpc.php
 export ZABBIX_USER=Admin
 export ZABBIX_PASSWORD=zabbix
 python3 zabbix/api/provision.py
+```
+
+Se o Python local nao conseguir acessar `localhost:8080` por causa de WSL, sandbox ou isolamento de rede, execute o provisionamento dentro da rede Docker:
+
+```bash
+docker run --rm \
+  --network zabbix_zabbix-net \
+  -v "$PWD:/work" \
+  -w /work \
+  -e ZABBIX_URL=http://zabbix-web:8080/api_jsonrpc.php \
+  -e ZABBIX_USER=Admin \
+  -e ZABBIX_PASSWORD=zabbix \
+  python:3.12-alpine \
+  python zabbix/api/provision.py
 ```
 
 O script e idempotente: se grupo, template, host, itens, triggers ou graficos ja existirem, ele tenta atualizar em vez de duplicar.
@@ -395,6 +426,8 @@ AllowKey=system.run[/usr/local/bin/start-squid.sh,*]
 Isso evita liberar comandos arbitrarios para execucao remota.
 
 O script de provisionamento tenta criar a Action automaticamente via API. Se a sua versao do Zabbix recusar os parametros de comando remoto, crie a Action manualmente seguindo os passos acima.
+
+No Zabbix 7, dependendo da imagem e da API disponivel, comandos remotos inline podem ser recusados no endpoint de Actions. Nesse caso, a parte academica continua valida: deixe a Action criada manualmente e tire o print da configuracao.
 
 ## Prints recomendados para entrega
 

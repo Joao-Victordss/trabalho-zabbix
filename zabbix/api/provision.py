@@ -86,13 +86,23 @@ def get_or_create_group(api):
     return api.call("hostgroup.create", {"name": GROUP_NAME})["groupids"][0]
 
 
-def get_or_create_template(api, groupid):
+def get_or_create_template_group(api):
+    try:
+        groups = api.call("templategroup.get", {"filter": {"name": [GROUP_NAME]}})
+        if groups:
+            return groups[0]["groupid"]
+        return api.call("templategroup.create", {"name": GROUP_NAME})["groupids"][0]
+    except RuntimeError:
+        return get_or_create_group(api)
+
+
+def get_or_create_template(api, template_groupid):
     templates = api.call("template.get", {"filter": {"host": [TEMPLATE_NAME]}})
     if templates:
         return templates[0]["templateid"]
     return api.call(
         "template.create",
-        {"host": TEMPLATE_NAME, "groups": [{"groupid": groupid}]},
+        {"host": TEMPLATE_NAME, "groups": [{"groupid": template_groupid}]},
     )["templateids"][0]
 
 
@@ -122,7 +132,6 @@ def get_or_create_host(api, groupid, templateid):
                 "hostid": hostid,
                 "groups": host_payload["groups"],
                 "templates": host_payload["templates"],
-                "interfaces": host_payload["interfaces"],
             },
         )
         return hostid
@@ -230,8 +239,10 @@ def ensure_items(api, templateid):
         if "params" in spec:
             payload["params"] = spec["params"]
         if spec["key_"] in existing:
-            payload["itemid"] = existing[spec["key_"]]["itemid"]
-            api.call("item.update", payload)
+            update_payload = dict(payload)
+            update_payload.pop("hostid", None)
+            update_payload["itemid"] = existing[spec["key_"]]["itemid"]
+            api.call("item.update", update_payload)
         else:
             api.call("item.create", payload)
     return get_items(api, templateid)
@@ -355,10 +366,9 @@ def ensure_remote_action(api, squid_triggerid):
                 "esc_step_to": 1,
                 "esc_period": "0",
                 "opcommand": {
-                    "type": 0,
-                    "execute_on": 0,
                     "command": "/usr/local/bin/start-squid.sh",
                 },
+                "opcommand_hst": [{"hostid": "0"}],
             }
         ],
     }
@@ -375,7 +385,8 @@ def main():
     api.login(ZABBIX_USER, ZABBIX_PASSWORD)
 
     groupid = get_or_create_group(api)
-    templateid = get_or_create_template(api, groupid)
+    template_groupid = get_or_create_template_group(api)
+    templateid = get_or_create_template(api, template_groupid)
     hostid = get_or_create_host(api, groupid, templateid)
     items = ensure_items(api, templateid)
     triggers = ensure_triggers(api, templateid)
